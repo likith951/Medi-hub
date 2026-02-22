@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper Functions ──────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isDoctor() {
+      return isSignedIn() && getUserRole() == 'doctor';
+    }
+
+    function isPatient() {
+      return isSignedIn() && getUserRole() == 'patient';
+    }
+
+    function isVerifiedDoctor() {
+      return isDoctor() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true;
+    }
+
+    function hasApprovedAccess(patientId) {
+      return isSignedIn() && exists(
+        /databases/$(database)/documents/access_requests/$(request.auth.uid + '_' + patientId)
+      );
+    }
+
+    // ─── Users ────────────────────────────────────────────────────────────
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow delete: if false; // Never delete user profiles
+    }
+
+    // ─── Patients ─────────────────────────────────────────────────────────
+
+    match /patients/{patientId} {
+      allow read: if isOwner(patientId) || isVerifiedDoctor();
+      allow create: if isOwner(patientId);
+      allow update: if isOwner(patientId);
+      allow delete: if false;
+    }
+
+    // ─── Doctors ──────────────────────────────────────────────────────────
+
+    match /doctors/{doctorId} {
+      // Public profile is readable by authenticated users
+      allow read: if isSignedIn();
+      allow create: if isOwner(doctorId);
+      // Doctors can update their own profile; stats updated server-side only
+      allow update: if isOwner(doctorId);
+      allow delete: if false;
+    }
+
+    // ─── Records ──────────────────────────────────────────────────────────
+
+    match /records/{recordId} {
+      allow read: if isOwner(resource.data.patientId) || isVerifiedDoctor();
+      allow create: if isPatient() && isOwner(request.resource.data.patientId);
+      allow update: if isOwner(resource.data.patientId) || isVerifiedDoctor();
+      allow delete: if false; // Records are never deleted — only archived
+
+      match /record_versions/{versionId} {
+        allow read: if isOwner(resource.data.patientId) || isVerifiedDoctor();
+        allow create: if isOwner(request.resource.data.patientId) || isVerifiedDoctor();
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+
+    // ─── Access Requests ──────────────────────────────────────────────────
+
+    match /access_requests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid
+      );
+      allow create: if isVerifiedDoctor();
+      allow update: if resource.data.patientId == request.auth.uid; // Only patient can respond
+      allow delete: if false;
+    }
+
+    // ─── Endorsements ─────────────────────────────────────────────────────
+
+    match /endorsements/{endorsementId} {
+      allow read: if isSignedIn();
+      allow create: if isVerifiedDoctor();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ─── Notifications ────────────────────────────────────────────────────
+
+    match /notifications/{notificationId} {
+      allow read: if isOwner(resource.data.recipientId);
+      allow update: if isOwner(resource.data.recipientId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']);
+      allow create: if false; // Only server can create
+      allow delete: if false;
+    }
+
+    // ─── Commits (Audit Log) ──────────────────────────────────────────────
+
+    match /commits/{commitId} {
+      allow read: if isOwner(resource.data.patientId) || isVerifiedDoctor();
+      allow write: if false; // Only server writes
+    }
+
+    // ─── Activity Log ─────────────────────────────────────────────────────
+
+    match /activity_log/{logId} {
+      allow read: if isOwner(resource.data.actorId);
+      allow write: if false; // Only server writes
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "port": 3000,
+  "nodeEnv": "development",
+  "allowedOrigins": ["http://localhost:3000", "http://localhost:5173"],
+  "rateLimit": { "windowMs": 900000, "maxRequests": 100 },
+  "authRateLimit": { "windowMs": 900000, "maxRequests": 20 }
+}

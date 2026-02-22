@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Medical records: only the patient and authorized doctors can access
+    match /records/{patientId}/{recordId}/{fileName} {
+      allow read: if request.auth != null && (
+        request.auth.uid == patientId
+        // Doctors with approved access should use server-side signed URLs (enforced in backend)
+      );
+
+      // Only the backend (admin SDK) can write — client cannot upload directly
+      allow write: if false;
+    }
+
+    // Deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
